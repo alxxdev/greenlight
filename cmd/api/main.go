@@ -10,9 +10,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/golang-migrate/migrate/v4"
-	"github.com/golang-migrate/migrate/v4/database/postgres"
-	_ "github.com/golang-migrate/migrate/v4/source/file"
+	"github.com/alxxdev/greenlight/internal/data"
 
 	_ "github.com/lib/pq"
 )
@@ -33,21 +31,19 @@ type config struct {
 type application struct {
 	config config
 	logger *slog.Logger
+	models data.Models
 }
 
 func main() {
 	var cfg config
 	flag.IntVar(&cfg.port, "port", 4000, "API server port")
-	flag.StringVar(&cfg.env, "env", "development", "Environment (development|staging|production")
+	flag.StringVar(&cfg.env, "env", "development", "Environment (development|staging|production)")
 	flag.StringVar(&cfg.db.dsn, "db-dsn", os.Getenv("GREENLIGHT_DB_DSN"), "PostgreSQL DSN")
-
 	flag.IntVar(&cfg.db.maxOpenConns, "db-max-open-conns", 25, "PostgreSQL max open connections")
 	flag.IntVar(&cfg.db.maxIdleConns, "db-max-idle-conns", 25, "PostgreSQL max idle connections")
 	flag.DurationVar(&cfg.db.maxIdleTime, "db-max-idle-time", 15*time.Minute, "PostgreSQL max connection idle time")
 	flag.Parse()
-
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-
 	db, err := openDB(cfg)
 	if err != nil {
 		logger.Error(err.Error())
@@ -55,29 +51,11 @@ func main() {
 	}
 	defer db.Close()
 	logger.Info("database connection pool established")
-
-	migrationDriver, err := postgres.WithInstance(db, &postgres.Config{})
-	if err != nil {
-		logger.Error(err.Error())
-		os.Exit(1)
-	}
-	migrator, err := migrate.NewWithDatabaseInstance("file:///path/to/your/migrations", "postgres", migrationDriver)
-	if err != nil {
-		logger.Error(err.Error())
-		os.Exit(1)
-	}
-	err = migrator.Up()
-	if err != nil && err != migrate.ErrNoChange {
-		logger.Error(err.Error())
-		os.Exit(1)
-	}
-	logger.Info("database migrations applied")
-
 	app := &application{
 		config: cfg,
 		logger: logger,
+		models: data.NewModels(db),
 	}
-
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.port),
 		Handler:      app.routes(),
@@ -86,7 +64,6 @@ func main() {
 		WriteTimeout: 10 * time.Second,
 		ErrorLog:     slog.NewLogLogger(logger.Handler(), slog.LevelError),
 	}
-
 	logger.Info("starting server", "addr", srv.Addr, "env", cfg.env)
 	err = srv.ListenAndServe()
 	logger.Error(err.Error())
